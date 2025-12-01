@@ -9,10 +9,9 @@ console.log("🔥 MentorshipForm loaded");
 const fwilLogoPath = '/fw_logo.jpg';
 const heroImagePath = '/hero_african_lawyer.jpg';
 
-// Supabase client (reads from env) - accept REACT_APP_ or VITE_ formats
+// Supabase client (reads from env) - accept REACT_APP_ or VITE_ prefixed envs
 const SUPA_URL = process.env.REACT_APP_SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const SUPA_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-
 let supabase;
 try {
   supabase = createClient(SUPA_URL, SUPA_KEY);
@@ -25,9 +24,9 @@ try {
 }
 
 // PayFast config from env
-const PAYFAST_URL = process.env.REACT_APP_PAYFAST_URL || 'https://www.payfast.co.za/eng/process';
-const PAYFAST_MERCHANT_ID = process.env.REACT_APP_PAYFAST_MERCHANT_ID || '';
-const PAYFAST_MERCHANT_KEY = process.env.REACT_APP_PAYFAST_MERCHANT_KEY || '';
+const PAYFAST_URL = process.env.REACT_APP_PAYFAST_URL || process.env.VITE_PAYFAST_URL || 'https://www.payfast.co.za/eng/process';
+const PAYFAST_MERCHANT_ID = process.env.REACT_APP_PAYFAST_MERCHANT_ID || process.env.VITE_PAYFAST_MERCHANT_ID || '';
+const PAYFAST_MERCHANT_KEY = process.env.REACT_APP_PAYFAST_MERCHANT_KEY || process.env.VITE_PAYFAST_MERCHANT_KEY || '';
 
 export default function MentorshipForm() {
   const [showForm, setShowForm] = useState(false);
@@ -36,28 +35,33 @@ export default function MentorshipForm() {
   const [appRow, setAppRow] = useState(null);
 
   const [formData, setFormData] = useState({
-    status: '', name: '', surname: '', email: '', contact: '', location: ''
+    status: '', // 'Student' | 'Graduate'
+    name: '',
+    surname: '',
+    email: '',
+    contact: '',
+    location: '' // 'Pretoria' | 'Johannesburg' | 'Outside Gauteng'
   });
   const [errors, setErrors] = useState({});
 
-useEffect(() => {
-  console.log("🔥 FWIL APP RENDERED");
-  document.body.style.overflow = (showForm || showPay) ? 'hidden' : 'auto';
-  return () => { document.body.style.overflow = 'auto'; };
-}, [showForm, showPay]);
-
+  // lock body scroll when modals are open
+  useEffect(() => {
+    console.log("🔥 FWIL APP RENDERED");
+    document.body.style.overflow = (showForm || showPay) ? 'hidden' : 'auto';
+    return () => { document.body.style.overflow = 'auto'; };
+  }, [showForm, showPay]);
 
   const openFormFor = (status) => {
-    setFormData(f => ({ ...f, status }));
+    setFormData(f => ({ ...f, status })); // preselect but allow change inside form
     setErrors({});
     setShowForm(true);
   };
 
   const update = (e) => {
     const { name, value, type } = e.target;
-    // radio buttons send value via onChange with name property; handle that
+    // radio buttons: we use name "status" or "location" depending on markup
     if (type === 'radio') {
-      setFormData(f => ({ ...f, location: value }));
+      setFormData(f => ({ ...f, [name]: value }));
     } else {
       setFormData(f => ({ ...f, [name]: value }));
     }
@@ -65,106 +69,91 @@ useEffect(() => {
 
   const validateDetails = () => {
     const e = {};
+    if (!formData.status) e.status = 'Choose student or graduate';
     if (!formData.name.trim()) e.name = 'Required';
     if (!formData.surname.trim()) e.surname = 'Required';
     if (!formData.email.trim()) e.email = 'Required';
     if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) e.email = 'Invalid email';
     if (!formData.contact.trim()) e.contact = 'Required';
     if (formData.contact && !/^[0-9+\s()-]{7,}$/.test(formData.contact)) e.contact = 'Invalid number';
-    if (!formData.location) e.location = 'Choose a city';
+    if (!formData.location) e.location = 'Choose a location';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
-// Replace your existing saveAndOpenPay with this exact function
-const saveAndOpenPay = async () => {
-  if (!validateDetails()) return;
-  setSaving(true);
+  const saveAndOpenPay = async () => {
+    if (!validateDetails()) return;
+    setSaving(true);
 
-  try {
-    const payload = {
-      status: formData.status,
-      name: formData.name,
-      surname: formData.surname,
-      email: formData.email,
-      contact: formData.contact,
-      location: formData.location,
-      paid: false
-    };
+    try {
+      const payload = {
+        status: formData.status,
+        name: formData.name,
+        surname: formData.surname,
+        email: formData.email,
+        contact: formData.contact,
+        location: formData.location,
+        paid: false
+      };
 
-    if (!supabase || !supabase.from) {
-      console.error('Supabase client not initialized. SUPA_URL or SUPA_KEY may be missing.');
-      alert('Supabase client not initialized. Check env variables and restart dev server.');
-      setSaving(false);
-      return;
-    }
-
-    console.log('Attempting insert payload:', payload);
-
-    const res = await supabase
-      .from('mentorship_applications')
-      .insert([payload])
-      .select()
-      .single();
-
-    // res may be { data, error } or similar depending on SDK version
-    console.log('Supabase insert result:', res);
-
-    // handle shape where result is { data, error }
-    const data = res?.data ?? res?.[0] ?? null;
-    const error = res?.error ?? (Array.isArray(res) ? null : res?.[1]) ?? null;
-
-    if (error) {
-      // more logging: if error.details or code exists
-      console.error('Insert returned error object:', error);
-      // If the SDK returned httpResponse in nested error, log it
-      if (error?.details) console.error('Error details:', error.details);
-      if (error?.status) console.error('HTTP status:', error.status);
-
-      // Try to extract server logs or response if present
-      try {
-        // Some SDK shapes include `error` with `.response` or `.originalError`
-        console.error('Raw error full object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-      } catch (jsonErr) {
-        // ignore stringify errors
+      if (!supabase || !supabase.from) {
+        console.error('Supabase client not initialized. SUPA_URL or SUPA_KEY may be missing.');
+        alert('Supabase client not initialized. Check env variables and restart dev server.');
+        setSaving(false);
+        return;
       }
 
-      // Show the user a helpful message and fallback
-      alert('Failed to save application on server. See console for details.');
+      console.log('Attempting insert payload:', payload);
 
-      // Fallback: save the application locally so you can continue to payment (local test)
+      const res = await supabase
+        .from('mentorship_applications')
+        .insert([payload])
+        .select()
+        .single();
+
+      console.log('Supabase insert result:', res);
+
+      const data = res?.data ?? null;
+      const error = res?.error ?? null;
+
+      if (error) {
+        console.error('Insert returned error object:', error);
+        try {
+          console.error('Raw error full object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+        } catch (jsonErr) {}
+        alert('Failed to save application on server. See console for details.');
+
+        // fallback local save
+        const fallbackId = 'local-' + Date.now();
+        const fallbackRow = { id: fallbackId, ...payload, created_at: new Date().toISOString() };
+        localStorage.setItem('fwil_fallback_application', JSON.stringify(fallbackRow));
+        setAppRow(fallbackRow);
+        setShowForm(false);
+        setShowPay(true);
+        setSaving(false);
+        return;
+      }
+
+      // success path
+      console.log('Insert succeeded, data:', data);
+      setAppRow(data);
+      setShowForm(false);
+      setShowPay(true);
+      setSaving(false);
+    } catch (err) {
+      console.error('Unexpected exception during insert:', err);
+      alert('Unexpected error saving application. See console for details.');
+
+      // fallback local save so flow continues
       const fallbackId = 'local-' + Date.now();
-      const fallbackRow = { id: fallbackId, ...payload, created_at: new Date().toISOString() };
+      const fallbackRow = { id: fallbackId, status: formData.status, name: formData.name, surname: formData.surname, email: formData.email, contact: formData.contact, location: formData.location, created_at: new Date().toISOString(), paid: false };
       localStorage.setItem('fwil_fallback_application', JSON.stringify(fallbackRow));
       setAppRow(fallbackRow);
       setShowForm(false);
       setShowPay(true);
       setSaving(false);
-      return;
     }
-
-    // success path
-    console.log('Insert succeeded, data:', data);
-    setAppRow(data);
-    setShowForm(false);
-    setShowPay(true);
-    setSaving(false);
-  } catch (err) {
-    console.error('Unexpected exception during insert:', err);
-    // If err has response, log it
-    if (err?.response) console.error('Exception response:', err.response);
-    alert('Unexpected error saving application. See console for details.');
-
-    // fallback local save so the flow continues while you fix server
-    const fallbackId = 'local-' + Date.now();
-    const fallbackRow = { id: fallbackId, status: formData.status, name: formData.name, surname: formData.surname, email: formData.email, contact: formData.contact, location: formData.location, created_at: new Date().toISOString(), paid: false };
-    localStorage.setItem('fwil_fallback_application', JSON.stringify(fallbackRow));
-    setAppRow(fallbackRow);
-    setShowForm(false);
-    setShowPay(true);
-    setSaving(false);
-  }
-};
+  };
 
   const submitPayfast = () => {
     const pf = document.getElementById('payfastForm');
@@ -185,13 +174,14 @@ const saveAndOpenPay = async () => {
         <div className="hero-inner">
           <div className="hero-left">
             <p className="tiny-tag">FOR WOMEN IN LAW</p>
-            <h1>Empowering women in law through mentorship, career guidance & legal education.</h1>
+            <h1>FOR WOMEN IN LAW FOR WOMEN IN LAW MENTORSHIP 2026</h1>
             <p className="lede">
-              Apply to join our mentorship program. Choose your path below and complete your details — all in this window.
+              exclusive to law students that are enrolled in a tertiary institution and graduates entering the profession within South Africa. The programme includes sessions during which the mentees are exposed to traditional and non-traditional career opportunities available within legal profession, job shadowing and receive training in the following areas: CV/Cover Letter Drafting | Personal Branding
+| Mental health education | Professional Conduct | Articles, Pupillage & Alternatives | Interview prep: What recruiters want.
             </p>
 
             <div className="cta-row">
-              <button className="btn primary" onClick={() => openFormFor('Student')}>Apply as Student</button>
+              <button className="btn primary" onClick={() => openFormFor('Student')}>Apply Here</button>
               <button className="btn ghost" onClick={() => openFormFor('Graduate')}>Apply as Graduate</button>
             </div>
           </div>
@@ -219,6 +209,33 @@ const saveAndOpenPay = async () => {
 
             <div className="modal-body">
               <div className="form-grid">
+                {/* Status (Student / Graduate) */}
+                <div className="form-field full">
+                  <label>Are you a</label>
+                  <div className="segmented" role="radiogroup" aria-label="Status">
+                    <input
+                      type="radio"
+                      id="status_student"
+                      name="status"
+                      value="Student"
+                      checked={formData.status === 'Student'}
+                      onChange={update}
+                    />
+                    <label htmlFor="status_student">Law Student</label>
+
+                    <input
+                      type="radio"
+                      id="status_graduate"
+                      name="status"
+                      value="Graduate"
+                      checked={formData.status === 'Graduate'}
+                      onChange={update}
+                    />
+                    <label htmlFor="status_graduate">Law Graduate</label>
+                  </div>
+                  {errors.status && <span className="err">{errors.status}</span>}
+                </div>
+
                 <div className="form-field">
                   <label>Name</label>
                   <input name="name" value={formData.name} onChange={update} placeholder="e.g., Noemi" />
@@ -243,13 +260,18 @@ const saveAndOpenPay = async () => {
                   {errors.contact && <span className="err">{errors.contact}</span>}
                 </div>
 
+                {/* Location: Pretoria, Johannesburg, Outside Gauteng */}
                 <div className="form-field full">
                   <label>Location</label>
-                  <div className="segmented">
-                    <input type="radio" id="pta" name="location" value="Pretoria" checked={formData.location === 'Pretoria'} onChange={update} />
-                    <label htmlFor="pta">Pretoria</label>
-                    <input type="radio" id="jhb" name="location" value="Johannesburg" checked={formData.location === 'Johannesburg'} onChange={update} />
-                    <label htmlFor="jhb">Johannesburg</label>
+                  <div className="segmented" style={{ gridTemplateColumns: 'auto auto auto' }}>
+                    <input type="radio" id="loc_pta" name="location" value="Pretoria" checked={formData.location === 'Pretoria'} onChange={update} />
+                    <label htmlFor="loc_pta">Pretoria</label>
+
+                    <input type="radio" id="loc_jhb" name="location" value="Johannesburg" checked={formData.location === 'Johannesburg'} onChange={update} />
+                    <label htmlFor="loc_jhb">Johannesburg</label>
+
+                    <input type="radio" id="loc_out" name="location" value="Outside Gauteng" checked={formData.location === 'Outside Gauteng'} onChange={update} />
+                    <label htmlFor="loc_out">Outside Gauteng</label>
                   </div>
                   {errors.location && <span className="err">{errors.location}</span>}
                 </div>
@@ -259,7 +281,7 @@ const saveAndOpenPay = async () => {
             <div className="modal-actions">
               <button className="btn ghost-dark" onClick={() => setShowForm(false)}>Cancel</button>
               <button className="btn primary" onClick={saveAndOpenPay} disabled={saving}>
-                {saving ? 'Saving...' : 'Continue to payment'}
+                {saving ? 'Saving...' : 'Continue: once off fee R350'}
               </button>
             </div>
           </div>
@@ -294,12 +316,16 @@ const saveAndOpenPay = async () => {
                 <input type="hidden" name="name_last" value={appRow.surname} />
                 <input type="hidden" name="email_address" value={appRow.email} />
                 <input type="hidden" name="cell_number" value={appRow.contact} />
+                {/* optional: return/cancel/notify URLs via env if configured */}
+                {/* <input type="hidden" name="return_url" value={process.env.REACT_APP_PAYFAST_RETURN_URL} /> */}
+                {/* <input type="hidden" name="cancel_url" value={process.env.REACT_APP_PAYFAST_CANCEL_URL} /> */}
+                {/* <input type="hidden" name="notify_url" value={process.env.REACT_APP_PAYFAST_NOTIFY_URL} /> */}
               </form>
             </div>
 
             <div className="modal-actions">
               <button className="btn ghost-dark" onClick={() => { setShowPay(false); setShowForm(true); }}>Cancel</button>
-              <button className="btn primary" onClick={submitPayfast}>Pay R350 on PayFast</button>
+              <button className="btn primary" onClick={submitPayfast}>Pay R350</button>
             </div>
           </div>
         </div>
