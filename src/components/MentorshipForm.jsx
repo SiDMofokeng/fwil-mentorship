@@ -205,7 +205,6 @@ export default function MentorshipForm() {
               <h3>Tell us about you</h3>
               <span className="chip">{formData.status || 'Applicant'}</span>
             </div>
-
             <div className="modal-body">
               <div className="form-grid">
                 {/* Status (Student / Graduate) */}
@@ -279,6 +278,7 @@ export default function MentorshipForm() {
 
             <div className="modal-actions">
               <button className="btn ghost-dark" onClick={() => setShowForm(false)}>Cancel</button>
+              <h5>NB: Please note that after paying the fee, you will be fully registered.</h5>
               <button className="btn primary" onClick={saveAndOpenPay} disabled={saving}>
                 {saving ? 'Saving...' : 'Continue: once off fee R350'}
               </button>
