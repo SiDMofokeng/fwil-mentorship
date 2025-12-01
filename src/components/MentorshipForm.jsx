@@ -182,7 +182,6 @@ export default function MentorshipForm() {
 
             <div className="cta-row">
               <button className="btn primary" onClick={() => openFormFor('Student')}>Apply Here</button>
-              <button className="btn ghost" onClick={() => openFormFor('Graduate')}>Apply as Graduate</button>
             </div>
           </div>
 
