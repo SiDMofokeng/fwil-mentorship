@@ -174,9 +174,9 @@ export default function MentorshipForm() {
         <div className="hero-inner">
           <div className="hero-left">
             <p className="tiny-tag">FOR WOMEN IN LAW</p>
-            <h1>FOR WOMEN IN LAW FOR WOMEN IN LAW MENTORSHIP 2026</h1>
+            <h1>MENTORSHIP 2026</h1>
             <p className="lede">
-              exclusive to law students that are enrolled in a tertiary institution and graduates entering the profession within South Africa. The programme includes sessions during which the mentees are exposed to traditional and non-traditional career opportunities available within legal profession, job shadowing and receive training in the following areas: CV/Cover Letter Drafting | Personal Branding
+              Exclusive to law students that are enrolled in a tertiary institution and graduates entering the profession within South Africa. The programme includes sessions during which the mentees are exposed to traditional and non-traditional career opportunities available within legal profession, job shadowing and receive training in the following areas: CV/Cover Letter Drafting | Personal Branding
 | Mental health education | Professional Conduct | Articles, Pupillage & Alternatives | Interview prep: What recruiters want.
             </p>
 
