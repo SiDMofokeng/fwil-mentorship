@@ -93,7 +93,7 @@ export default function MentorshipForm() {
         email: formData.email,
         contact: formData.contact,
         location: formData.location,
-        paid: false
+        paid: true,
       };
 
       if (!supabase || !supabase.from) {

@@ -2,8 +2,6 @@
 import React, { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import '../components/MentorshipForm.css';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 
 const fwilLogoPath = '/fw_logo.jpg';
 const SUPA_URL = process.env.REACT_APP_SUPABASE_URL || '';
@@ -86,219 +84,63 @@ export default function AdminPanel() {
     return obj;
   };
 
-// Build a printable HTML string (new professional layout)
-const buildConfirmationHtml = (row) => {
-  const user = getUserFields(row);
-  const applicantName = `${row.name || ''} ${row.surname || ''}`.trim();
-  const paid = row.paid ? 'PAID' : 'NOT PAID';
-  const payColor = row.paid ? '#065f46' : '#b91c1c';
-  const date = row.created_at
-    ? new Date(row.created_at).toLocaleString()
-    : new Date().toLocaleString();
+  // Build a printable HTML string (legal-style) for the confirmation
+  const buildConfirmationHtml = (row) => {
+    const user = getUserFields(row);
+    const paidText = row.paid ? 'PAID' : 'NOT PAID';
+    const date = row.created_at ? new Date(row.created_at).toLocaleString() : new Date().toLocaleString();
 
-  // Build detail rows
-  let detailRows = '';
-  Object.entries(user).forEach(([key, value]) => {
-    const label = key.charAt(0).toUpperCase() + key.slice(1);
-    detailRows += `
-      <div class="detail-row">
-        <div class="detail-label">${label}</div>
-        <div class="detail-value">${value}</div>
+    const company = 'For Women in Law';
+    const header = `
+      <div style="text-align:center; margin-bottom:18px;">
+        <img src="${fwilLogoPath}" alt="${company}" style="max-height:56px; display:block; margin: 0 auto 8px;" />
+        <h2 style="margin:6px 0 0; font-family:Georgia, 'Times New Roman', serif;">${company}</h2>
+        <div style="font-size:12px; color:#666; margin-top:4px;">Mentorship Program Registration Confirmation</div>
       </div>`;
-  });
 
-  // Add paid + date rows
-  detailRows += `
-    <div class="detail-row">
-      <div class="detail-label">Registration status</div>
-      <div class="detail-value" style="font-weight:700; color:${payColor};">${paid}</div>
-    </div>
-    <div class="detail-row">
-      <div class="detail-label">Date</div>
-      <div class="detail-value">${date}</div>
-    </div>
-  `;
+    let body = `<div style="margin-top:10px; font-family: 'Helvetica Neue', Arial, sans-serif; color:#111;">`;
+    body += `<p style="margin:0 0 10px">This confirms that the following applicant has been registered with the Mentorship Programme:</p>`;
 
-  // HTML structure
-  return `
-  <!doctype html>
-  <html>
-  <head>
-    <meta charset="UTF-8" />
-    <title>FWIL Confirmation</title>
-    <style>
-      body {
-        padding: 32px;
-        font-family: "Inter", Arial, sans-serif;
-        color: #0B0F1E;
-        background:#fff;
-        max-width:800px;
-        margin:0 auto;
-        line-height:1.55;
-      }
-      .logo {
-        max-height:70px;
-        margin-bottom:16px;
-      }
-      .heading-main {
-        font-size:26px;
-        font-weight:800;
-        color:#8B1E3F;
-        margin-bottom:4px;
-      }
-      .subheading {
-        font-size:16px;
-        color:#475569;
-        margin-bottom:24px;
-      }
-      .detail-block {
-        margin-top:18px;
-        border:1px solid #e5e7eb;
-        border-radius:12px;
-        padding:18px 20px;
-        background:#fafafa;
-      }
-      .detail-row {
-        display:flex;
-        padding:8px 0;
-        border-bottom:1px solid #eee;
-      }
-      .detail-row:last-child {
-        border-bottom:none;
-      }
-      .detail-label {
-        width:180px;
-        font-weight:700;
-        color:#374151;
-      }
-      .detail-value {
-        flex:1;
-        color:#0B0F1E;
-      }
-      .footer {
-        margin-top:32px;
-        font-size:13px;
-        color:#6b7280;
-        border-top:1px solid #e5e7eb;
-        padding-top:12px;
-      }
-    </style>
-  </head>
+    body += '<table style="width:100%; border-collapse:collapse; font-size:15px;">';
+    Object.entries(user).forEach(([k,v]) => {
+      const label = k.charAt(0).toUpperCase() + k.slice(1);
+      body += `
+        <tr>
+          <td style="padding:8px 6px; width:35%; vertical-align:top; color:#374151;"><strong>${label}</strong></td>
+          <td style="padding:8px 6px; vertical-align:top;">${String(v)}</td>
+        </tr>`;
+    });
+    body += `
+      <tr>
+        <td style="padding:8px 6px; color:#374151;"><strong>Registration status</strong></td>
+        <td style="padding:8px 6px;"><strong>${paidText}</strong></td>
+      </tr>`;
+    body += `
+      <tr>
+        <td style="padding:8px 6px; color:#374151;"><strong>Date</strong></td>
+        <td style="padding:8px 6px;">${date}</td>
+      </tr>`;
+    body += '</table>';
 
-  <body>
-    <img src="${fwilLogoPath}" class="logo" />
+    body += '<hr style="margin:18px 0; border:none; border-top:1px solid #e6e6e6" />';
+    body += '<p style="font-size:13px; color:#6b7280">This document confirms registration on the FWIL mentorship program. This notice is issued by For Women in Law.</p>';
+    body += '</div>';
 
-    <div class="heading-main">You Are Fully Registered for the FWIL Mentorship Programme</div>
-    <div class="subheading">Thank you for joining the For Women in Law community.</div>
+    return `<!doctype html><html><head><meta charset="utf-8"><title>FWIL Confirmation</title></head><body style="padding:28px; font-family:Arial, sans-serif; color:#111; max-width:800px; margin:0 auto;">${header}${body}</body></html>`;
+  };
 
-    <p><strong>Dear ${applicantName},</strong></p>
-
-    <p>
-      Thank you for registering for the <strong>For Women in Law Mentorship Programme</strong>.
-      Your application has been successfully received.
-    </p>
-
-    <p style="margin-top:12px; font-size:15px; font-weight:700; color:${payColor};">
-      ${paid}
-    </p>
-
-    <p>
-      We appreciate your commitment to your legal career. The FWIL Mentorship Programme supports
-      women in law through professional development, mentorship and community.
-    </p>
-
-    <h2 style="margin-top:24px; font-size:20px; font-weight:700;">Your Registration Details</h2>
-
-    <div class="detail-block">
-      ${detailRows}
-    </div>
-
-    <div class="footer">
-      This document serves as an official confirmation of your registration with the
-      For Women in Law Mentorship Programme. Please keep it for your records.
-    </div>
-
-    <p style="margin-top:20px;">
-      Warm regards,<br />
-      <strong>The For Women in Law Team</strong>
-    </p>
-  </body>
-  </html>
-  `;
-};
-
-// Replace downloadPDF with this:
-const downloadPDF = async (row) => {
-  if (!row) return;
-
-  try {
-    // 1. Build the full HTML page content
+  // Open printable window for PDF (uses print-to-PDF in browser)
+  const downloadPDF = (row) => {
+    if (!row) return;
     const html = buildConfirmationHtml(row);
-
-    // 2. Create hidden iframe
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.left = '-9999px';
-    iframe.style.top = '-9999px';
-    iframe.style.width = '800px';
-    iframe.style.height = '1200px';
-    document.body.appendChild(iframe);
-
-    // 3. Write HTML into iframe
-    iframe.contentDocument.open();
-    iframe.contentDocument.write(html);
-    iframe.contentDocument.close();
-
-    // 4. Wait for all images (logo) to load
-    await new Promise((resolve) => {
-      const imgs = iframe.contentDocument.images;
-      if (imgs.length === 0) return resolve();
-
-      let loaded = 0;
-      for (let i = 0; i < imgs.length; i++) {
-        imgs[i].onload = imgs[i].onerror = () => {
-          loaded++;
-          if (loaded === imgs.length) resolve();
-        };
-      }
-
-      // fallback timeout
-      setTimeout(resolve, 2500);
-    });
-
-    // 5. Wait a moment for layout
-    await new Promise((r) => setTimeout(r, 180));
-
-    // 6. Render the iframe body to canvas
-    const canvas = await html2canvas(iframe.contentDocument.body, {
-      scale: 2,
-      useCORS: true,
-      allowTaint: false,
-      backgroundColor: '#ffffff'
-    });
-
-    // 7. Generate PDF
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 10;
-
-    const imgWidth = pageWidth - margin * 2;
-    const imgHeight = (canvas.height / canvas.width) * imgWidth;
-    const imgData = canvas.toDataURL('image/jpeg', 0.98);
-
-    pdf.addImage(imgData, 'JPEG', margin, margin, imgWidth, imgHeight);
-    pdf.save(`FWIL_confirmation_${row.id || Date.now()}.pdf`);
-
-    // Cleanup
-    document.body.removeChild(iframe);
-
-  } catch (err) {
-    console.error('PDF ERROR:', err);
-    alert('Failed to generate PDF. Check console for details.');
-  }
-};
-
+    const w = window.open('', '_blank', 'noopener,noreferrer');
+    if (!w) { alert('Popups blocked — allow popups for this site to download PDF.'); return; }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    // small delay to allow images to load
+    setTimeout(() => { w.focus(); w.print(); }, 500);
+  };
 
   // Call serverless function to send confirmation email
   const emailConfirmation = async (row) => {
@@ -417,6 +259,10 @@ const downloadPDF = async (row) => {
                 {/* Download only available when record exists */}
                 <button className="btn ghost-dark" onClick={() => downloadPDF(selected)}>Download PDF</button>
 
+                {/* Email only allowed when paid state is defined (true/false) */}
+                <button className="btn primary" onClick={() => emailConfirmation(selected)} disabled={actionLoadingId === selected.id || selected.paid === undefined || selected.paid === null}>
+                  {actionLoadingId === selected.id ? 'Sending...' : 'Email confirmation'}
+                </button>
               </div>
             </div>
           </div>
