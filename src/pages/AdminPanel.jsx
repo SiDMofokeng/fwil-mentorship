@@ -72,6 +72,91 @@ export default function AdminPanel() {
     finally { setActionLoadingId(null); }
   };
 
+  // --- Add export CSV helper (place inside AdminPanel component, e.g. after markPaid) ---
+const exportApplicantsCsv = async () => {
+  setMessage('Preparing CSV...');
+  try {
+    // Fetch ALL rows (no range) sorted by surname then name
+    const res = await supabase
+      .from('mentorship_applications')
+      .select('*')
+      .order('surname', { ascending: true })
+      .order('name', { ascending: true });
+
+    if (res.error) {
+      console.error('Supabase fetch for CSV error', res.error);
+      setMessage('Failed to fetch applicants for export.');
+      return;
+    }
+
+    const all = res.data || [];
+    if (!all.length) {
+      setMessage('No applicants to export.');
+      return;
+    }
+
+    // Columns to include (in this order). Add or remove keys if your table differs.
+    const headers = [
+      'id', 'status', 'name', 'surname', 'email', 'contact',
+      'location', 'paid', 'created_at', 'payment_method', 'payment_reference', 'payment_date'
+    ];
+
+    // Build CSV string (UTF-8 BOM + rows)
+    const escapeCell = (val) => {
+      if (val === null || val === undefined) return '';
+      const s = String(val);
+      // escape quotes by doubling them, and wrap cell in quotes if it contains comma/newline/quote
+      const needsQuotes = /[",\n\r]/.test(s);
+      const escaped = s.replace(/"/g, '""');
+      return needsQuotes ? `"${escaped}"` : escaped;
+    };
+
+    const csvRows = [];
+    csvRows.push(headers.join(',')); // header row
+
+    // Ensure alphabetical order (surname then name) as a safety net
+    all.sort((a, b) => {
+      const sa = String(a.surname || '').toLowerCase();
+      const sb = String(b.surname || '').toLowerCase();
+      if (sa < sb) return -1;
+      if (sa > sb) return 1;
+      // tie-breaker: name
+      const na = String(a.name || '').toLowerCase();
+      const nb = String(b.name || '').toLowerCase();
+      if (na < nb) return -1;
+      if (na > nb) return 1;
+      return 0;
+    });
+
+    all.forEach(row => {
+      const rowVals = headers.map(h => {
+        // format booleans and dates for readability
+        if (h === 'paid') return row.paid ? 'TRUE' : 'FALSE';
+        if (h === 'created_at' || h === 'payment_date') return row[h] ? new Date(row[h]).toLocaleString() : '';
+        return escapeCell(row[h]);
+      });
+      csvRows.push(rowVals.join(','));
+    });
+
+    const csvString = '\uFEFF' + csvRows.join('\r\n'); // BOM so Excel detects UTF-8
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const filename = `fwil_applicants_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setMessage(`Exported ${all.length} applicants`);
+  } catch (err) {
+    console.error('CSV export error', err);
+    setMessage('Unexpected error exporting CSV. See console.');
+  }
+};
+
+
   // --- DETAILS modal helpers ------------------------------------------------
 
   // Build a clean "user-entered fields only" object
@@ -351,10 +436,20 @@ const downloadPDF = async (row) => {
             <option value="">All payment</option><option value="paid">Paid</option><option value="unpaid">Unpaid</option>
           </select>
 
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
             <button className="btn ghost-dark" onClick={() => { setQuery(''); setStatusFilter(''); setLocationFilter(''); setPaidFilter(''); setPage(1); fetchRows(); }}>Reset</button>
+
             <button className="btn ghost-dark" onClick={() => { setPage(1); fetchRows(); }}>Refresh</button>
+
+            <button
+              className="btn ghost-dark"
+              onClick={exportApplicantsCsv}
+              title="Download all applicants as CSV (alphabetical by surname)"
+            >
+              Download CSV
+            </button>
           </div>
+
         </div>
 
         {message && <div style={{ marginBottom: 12, color: '#b91c1c' }}>{message}</div>}
