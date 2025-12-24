@@ -180,9 +180,27 @@ export default function MentorshipForm() {
 | Mental health education | Professional Conduct | Articles, Pupillage & Alternatives | Interview prep: What recruiters want.
             </p>
 
-            <div className="cta-row">
-              <button className="btn primary" onClick={() => openFormFor('Student')}>Apply Here</button>
+            {/*
+              <div className="cta-row">
+                <button className="btn primary" onClick={() => openFormFor('Student')}>Apply Here</button>
+              </div>
+            */}
+
+            <div
+              style={{
+                padding: '14px',
+                borderRadius: '10px',
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                color: '#334155',
+                fontWeight: 600,
+                textAlign: 'center',
+                marginTop: '12px'
+              }}
+            >
+              Applications for the FWIL Mentorship Programme are currently closed.
             </div>
+
           </div>
 
           <div className="hero-right">
