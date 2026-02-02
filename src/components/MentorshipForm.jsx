@@ -93,7 +93,7 @@ export default function MentorshipForm() {
         email: formData.email,
         contact: formData.contact,
         location: formData.location,
-        paid: true,
+        paid: false,
       };
 
       if (!supabase || !supabase.from) {
@@ -120,7 +120,7 @@ export default function MentorshipForm() {
         console.error('Insert returned error object:', error);
         try {
           console.error('Raw error full object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-        } catch (jsonErr) {}
+        } catch (jsonErr) { }
         alert('Failed to save application on server. See console for details.');
 
         // fallback local save
@@ -177,7 +177,7 @@ export default function MentorshipForm() {
             <h1>MENTORSHIP 2026</h1>
             <p className="lede">
               Exclusive to law students that are enrolled in a tertiary institution and graduates entering the profession within South Africa. The 8 week programme includes sessions during which the mentees are exposed to traditional and non-traditional career opportunities available within legal profession, job shadowing and receive training in the following areas: CV/Cover Letter Drafting | Personal Branding
-| Mental health education | Professional Conduct | Articles, Pupillage & Alternatives | Interview prep: What recruiters want.
+              | Mental health education | Professional Conduct | Articles, Pupillage & Alternatives | Interview prep: What recruiters want.
             </p>
 
             {/*
@@ -326,18 +326,27 @@ export default function MentorshipForm() {
               <form id="payfastForm" action={PAYFAST_URL} method="post" className="hidden-form">
                 <input type="hidden" name="merchant_id" value={PAYFAST_MERCHANT_ID} />
                 <input type="hidden" name="merchant_key" value={PAYFAST_MERCHANT_KEY} />
-                <input type="hidden" name="amount" value="350" />
+
+                <input type="hidden" name="amount" value="350.00" />
                 <input type="hidden" name="item_name" value="FWIL Mentorship Application" />
+
+                {/* This is the Supabase row id — ITN uses this to mark paid */}
                 <input type="hidden" name="custom_str1" value={String(appRow.id)} />
+
+                {/* Applicant info (optional but fine) */}
                 <input type="hidden" name="name_first" value={appRow.name} />
                 <input type="hidden" name="name_last" value={appRow.surname} />
                 <input type="hidden" name="email_address" value={appRow.email} />
                 <input type="hidden" name="cell_number" value={appRow.contact} />
-                {/* optional: return/cancel/notify URLs via env if configured */}
-                {/* <input type="hidden" name="return_url" value={process.env.REACT_APP_PAYFAST_RETURN_URL} /> */}
-                {/* <input type="hidden" name="cancel_url" value={process.env.REACT_APP_PAYFAST_CANCEL_URL} /> */}
-                {/* <input type="hidden" name="notify_url" value={process.env.REACT_APP_PAYFAST_NOTIFY_URL} /> */}
+
+                {/* PAYFAST ITN (THIS IS THE IMPORTANT NEW LINE) */}
+                <input
+                  type="hidden"
+                  name="notify_url"
+                  value="https://fwil-mentorship.vercel.app/api/payfast-itn"
+                />
               </form>
+
             </div>
 
             <div className="modal-actions">
