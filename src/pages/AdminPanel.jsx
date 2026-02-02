@@ -1,5 +1,5 @@
 // FILE: src/pages/AdminPanel.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import '../components/MentorshipForm.css';
 import html2canvas from 'html2canvas';
@@ -23,9 +23,7 @@ export default function AdminPanel() {
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [message, setMessage] = useState('');
 
-  useEffect(() => { fetchRows(); }, [page, statusFilter, locationFilter, paidFilter]);
-
-  async function fetchRows() {
+  const fetchRows = useCallback(async () => {
     setLoading(true); setMessage('');
     try {
       let qb = supabase
@@ -47,7 +45,9 @@ export default function AdminPanel() {
       else setRows(res.data || []);
     } catch (err) { console.error(err); setMessage('Unexpected error fetching rows.'); }
     finally { setLoading(false); }
-  }
+  }, [page, pageSize, query, statusFilter, locationFilter, paidFilter]);
+
+  useEffect(() => { fetchRows(); }, [fetchRows]);
 
   const onSearch = async () => { setPage(1); await fetchRows(); };
 
@@ -73,88 +73,88 @@ export default function AdminPanel() {
   };
 
   // --- Add export CSV helper (place inside AdminPanel component, e.g. after markPaid) ---
-const exportApplicantsCsv = async () => {
-  setMessage('Preparing CSV...');
-  try {
-    // Fetch ALL rows (no range) sorted by surname then name
-    const res = await supabase
-      .from('mentorship_applications')
-      .select('*')
-      .order('surname', { ascending: true })
-      .order('name', { ascending: true });
+  const exportApplicantsCsv = async () => {
+    setMessage('Preparing CSV...');
+    try {
+      // Fetch ALL rows (no range) sorted by surname then name
+      const res = await supabase
+        .from('mentorship_applications')
+        .select('*')
+        .order('surname', { ascending: true })
+        .order('name', { ascending: true });
 
-    if (res.error) {
-      console.error('Supabase fetch for CSV error', res.error);
-      setMessage('Failed to fetch applicants for export.');
-      return;
-    }
+      if (res.error) {
+        console.error('Supabase fetch for CSV error', res.error);
+        setMessage('Failed to fetch applicants for export.');
+        return;
+      }
 
-    const all = res.data || [];
-    if (!all.length) {
-      setMessage('No applicants to export.');
-      return;
-    }
+      const all = res.data || [];
+      if (!all.length) {
+        setMessage('No applicants to export.');
+        return;
+      }
 
-    // Columns to include (in this order). Add or remove keys if your table differs.
-    const headers = [
-      'id', 'status', 'name', 'surname', 'email', 'contact',
-      'location', 'paid', 'created_at', 'payment_method', 'payment_reference', 'payment_date'
-    ];
+      // Columns to include (in this order). Add or remove keys if your table differs.
+      const headers = [
+        'id', 'status', 'name', 'surname', 'email', 'contact',
+        'location', 'paid', 'created_at', 'payment_method', 'payment_reference', 'payment_date'
+      ];
 
-    // Build CSV string (UTF-8 BOM + rows)
-    const escapeCell = (val) => {
-      if (val === null || val === undefined) return '';
-      const s = String(val);
-      // escape quotes by doubling them, and wrap cell in quotes if it contains comma/newline/quote
-      const needsQuotes = /[",\n\r]/.test(s);
-      const escaped = s.replace(/"/g, '""');
-      return needsQuotes ? `"${escaped}"` : escaped;
-    };
+      // Build CSV string (UTF-8 BOM + rows)
+      const escapeCell = (val) => {
+        if (val === null || val === undefined) return '';
+        const s = String(val);
+        // escape quotes by doubling them, and wrap cell in quotes if it contains comma/newline/quote
+        const needsQuotes = /[",\n\r]/.test(s);
+        const escaped = s.replace(/"/g, '""');
+        return needsQuotes ? `"${escaped}"` : escaped;
+      };
 
-    const csvRows = [];
-    csvRows.push(headers.join(',')); // header row
+      const csvRows = [];
+      csvRows.push(headers.join(',')); // header row
 
-    // Ensure alphabetical order (surname then name) as a safety net
-    all.sort((a, b) => {
-      const sa = String(a.surname || '').toLowerCase();
-      const sb = String(b.surname || '').toLowerCase();
-      if (sa < sb) return -1;
-      if (sa > sb) return 1;
-      // tie-breaker: name
-      const na = String(a.name || '').toLowerCase();
-      const nb = String(b.name || '').toLowerCase();
-      if (na < nb) return -1;
-      if (na > nb) return 1;
-      return 0;
-    });
-
-    all.forEach(row => {
-      const rowVals = headers.map(h => {
-        // format booleans and dates for readability
-        if (h === 'paid') return row.paid ? 'TRUE' : 'FALSE';
-        if (h === 'created_at' || h === 'payment_date') return row[h] ? new Date(row[h]).toLocaleString() : '';
-        return escapeCell(row[h]);
+      // Ensure alphabetical order (surname then name) as a safety net
+      all.sort((a, b) => {
+        const sa = String(a.surname || '').toLowerCase();
+        const sb = String(b.surname || '').toLowerCase();
+        if (sa < sb) return -1;
+        if (sa > sb) return 1;
+        // tie-breaker: name
+        const na = String(a.name || '').toLowerCase();
+        const nb = String(b.name || '').toLowerCase();
+        if (na < nb) return -1;
+        if (na > nb) return 1;
+        return 0;
       });
-      csvRows.push(rowVals.join(','));
-    });
 
-    const csvString = '\uFEFF' + csvRows.join('\r\n'); // BOM so Excel detects UTF-8
-    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const filename = `fwil_applicants_${new Date().toISOString().slice(0,10)}.csv`;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setMessage(`Exported ${all.length} applicants`);
-  } catch (err) {
-    console.error('CSV export error', err);
-    setMessage('Unexpected error exporting CSV. See console.');
-  }
-};
+      all.forEach(row => {
+        const rowVals = headers.map(h => {
+          // format booleans and dates for readability
+          if (h === 'paid') return row.paid ? 'TRUE' : 'FALSE';
+          if (h === 'created_at' || h === 'payment_date') return row[h] ? new Date(row[h]).toLocaleString() : '';
+          return escapeCell(row[h]);
+        });
+        csvRows.push(rowVals.join(','));
+      });
+
+      const csvString = '\uFEFF' + csvRows.join('\r\n'); // BOM so Excel detects UTF-8
+      const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const filename = `fwil_applicants_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setMessage(`Exported ${all.length} applicants`);
+    } catch (err) {
+      console.error('CSV export error', err);
+      setMessage('Unexpected error exporting CSV. See console.');
+    }
+  };
 
 
   // --- DETAILS modal helpers ------------------------------------------------
@@ -171,29 +171,29 @@ const exportApplicantsCsv = async () => {
     return obj;
   };
 
-// Build a printable HTML string (new professional layout)
-const buildConfirmationHtml = (row) => {
-  const user = getUserFields(row);
-  const applicantName = `${row.name || ''} ${row.surname || ''}`.trim();
-  const paid = row.paid ? 'PAID' : 'NOT PAID';
-  const payColor = row.paid ? '#065f46' : '#b91c1c';
-  const date = row.created_at
-    ? new Date(row.created_at).toLocaleString()
-    : new Date().toLocaleString();
+  // Build a printable HTML string (new professional layout)
+  const buildConfirmationHtml = (row) => {
+    const user = getUserFields(row);
+    const applicantName = `${row.name || ''} ${row.surname || ''}`.trim();
+    const paid = row.paid ? 'PAID' : 'NOT PAID';
+    const payColor = row.paid ? '#065f46' : '#b91c1c';
+    const date = row.created_at
+      ? new Date(row.created_at).toLocaleString()
+      : new Date().toLocaleString();
 
-  // Build detail rows
-  let detailRows = '';
-  Object.entries(user).forEach(([key, value]) => {
-    const label = key.charAt(0).toUpperCase() + key.slice(1);
-    detailRows += `
+    // Build detail rows
+    let detailRows = '';
+    Object.entries(user).forEach(([key, value]) => {
+      const label = key.charAt(0).toUpperCase() + key.slice(1);
+      detailRows += `
       <div class="detail-row">
         <div class="detail-label">${label}</div>
         <div class="detail-value">${value}</div>
       </div>`;
-  });
+    });
 
-  // Add paid + date rows
-  detailRows += `
+    // Add paid + date rows
+    detailRows += `
     <div class="detail-row">
       <div class="detail-label">Registration status</div>
       <div class="detail-value" style="font-weight:700; color:${payColor};">${paid}</div>
@@ -204,8 +204,8 @@ const buildConfirmationHtml = (row) => {
     </div>
   `;
 
-  // HTML structure
-  return `
+    // HTML structure
+    return `
   <!doctype html>
   <html>
   <head>
@@ -310,103 +310,81 @@ const buildConfirmationHtml = (row) => {
   </body>
   </html>
   `;
-};
+  };
 
-// Replace downloadPDF with this:
-const downloadPDF = async (row) => {
-  if (!row) return;
+  const waitForImg = (img) => new Promise((resolve) => {
+    if (!img) return resolve();
+    if (img.complete) return resolve();
 
-  try {
-    // 1. Build the full HTML page content
-    const html = buildConfirmationHtml(row);
+    const done = () => {
+      img.removeEventListener('load', done);
+      img.removeEventListener('error', done);
+      resolve();
+    };
 
-    // 2. Create hidden iframe
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.left = '-9999px';
-    iframe.style.top = '-9999px';
-    iframe.style.width = '800px';
-    iframe.style.height = '1200px';
-    document.body.appendChild(iframe);
+    img.addEventListener('load', done);
+    img.addEventListener('error', done);
 
-    // 3. Write HTML into iframe
-    iframe.contentDocument.open();
-    iframe.contentDocument.write(html);
-    iframe.contentDocument.close();
+    // safety timeout
+    setTimeout(done, 4000);
+  });
 
-    // 4. Wait for all images (logo) to load
-    await new Promise((resolve) => {
-      const imgs = iframe.contentDocument.images;
-      if (imgs.length === 0) return resolve();
-
-      let loaded = 0;
-      for (let i = 0; i < imgs.length; i++) {
-        imgs[i].onload = imgs[i].onerror = () => {
-          loaded++;
-          if (loaded === imgs.length) resolve();
-        };
-      }
-
-      // fallback timeout
-      setTimeout(resolve, 2500);
-    });
-
-    // 5. Wait a moment for layout
-    await new Promise((r) => setTimeout(r, 180));
-
-    // 6. Render the iframe body to canvas
-    const canvas = await html2canvas(iframe.contentDocument.body, {
-      scale: 2,
-      useCORS: true,
-      allowTaint: false,
-      backgroundColor: '#ffffff'
-    });
-
-    // 7. Generate PDF
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 10;
-
-    const imgWidth = pageWidth - margin * 2;
-    const imgHeight = (canvas.height / canvas.width) * imgWidth;
-    const imgData = canvas.toDataURL('image/jpeg', 0.98);
-
-    pdf.addImage(imgData, 'JPEG', margin, margin, imgWidth, imgHeight);
-    pdf.save(`FWIL_confirmation_${row.id || Date.now()}.pdf`);
-
-    // Cleanup
-    document.body.removeChild(iframe);
-
-  } catch (err) {
-    console.error('PDF ERROR:', err);
-    alert('Failed to generate PDF. Check console for details.');
-  }
-};
-
-
-  // Call serverless function to send confirmation email
-  const emailConfirmation = async (row) => {
+  // Replace downloadPDF with this:
+  const downloadPDF = async (row) => {
     if (!row) return;
-    if (row.paid === null || row.paid === undefined) {
-      alert('Payment status not set. Mark paid or unpaid before emailing confirmation.');
-      return;
-    }
-    const confirm = window.confirm(`Send registration confirmation to ${row.email}?`);
-    if (!confirm) return;
-    setActionLoadingId(row.id);
-    setMessage('');
+
     try {
-      const resp = await fetch('/api/send-confirmation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: row.id })
+      // 1. Build the full HTML page content
+      const html = buildConfirmationHtml(row);
+
+      // 2. Create hidden iframe
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.left = '-9999px';
+      iframe.style.top = '-9999px';
+      iframe.style.width = '800px';
+      iframe.style.height = '1200px';
+      document.body.appendChild(iframe);
+
+      // 3. Write HTML into iframe
+      iframe.contentDocument.open();
+      iframe.contentDocument.write(html);
+      iframe.contentDocument.close();
+
+      // 4. Wait for all images (logo) to load
+      const imgs = Array.from(iframe.contentDocument.images || []);
+      await Promise.all(imgs.map(waitForImg));
+
+      // 5. Wait a moment for layout
+      await new Promise((r) => setTimeout(r, 180));
+
+      // 6. Render the iframe body to canvas
+      const canvas = await html2canvas(iframe.contentDocument.body, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: '#ffffff'
       });
-      const json = await resp.json();
-      if (!resp.ok) { setMessage(json?.error || 'Failed to send email.'); console.error('send-confirmation:', json); }
-      else setMessage('Confirmation email sent.');
-    } catch (err) { console.error(err); setMessage('Network error sending email.'); }
-    finally { setActionLoadingId(null); }
+
+      // 7. Generate PDF
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const margin = 10;
+
+      const imgWidth = pageWidth - margin * 2;
+      const imgHeight = (canvas.height / canvas.width) * imgWidth;
+      const imgData = canvas.toDataURL('image/jpeg', 0.98);
+
+      pdf.addImage(imgData, 'JPEG', margin, margin, imgWidth, imgHeight);
+      pdf.save(`FWIL_confirmation_${row.id || Date.now()}.pdf`);
+
+      // Cleanup
+      document.body.removeChild(iframe);
+
+    } catch (err) {
+      console.error('PDF ERROR:', err);
+      alert('Failed to generate PDF. Check console for details.');
+    }
   };
 
   // --- UI rendering ---------------------------------------------------------
@@ -478,26 +456,26 @@ const downloadPDF = async (row) => {
           <div className="modal-panel" style={{ maxWidth: 720 }}>
             <div className="modal-head">
               <button className="link-back" onClick={() => setSelected(null)}>← Close</button>
-              <h3 style={{ color:'#0b0f1e' }}>Applicant details</h3>
+              <h3 style={{ color: '#0b0f1e' }}>Applicant details</h3>
               <span className="chip">{selected.status || 'Applicant'}</span>
             </div>
 
             <div className="modal-body">
               {/* Clean list of only user-entered fields */}
-              <div style={{ background:'#fff', borderRadius:10, padding:14, border:'1px solid #eef2f7' }}>
-                {Object.entries(getUserFields(selected)).map(([k,v]) => (
-                  <div key={k} style={{ display:'flex', gap:12, padding:'6px 0', borderBottom:'1px solid #f3f4f6' }}>
-                    <div style={{ width:160, color:'#374151', fontWeight:700 }}>{k.charAt(0).toUpperCase()+k.slice(1)}</div>
-                    <div style={{ color:'#0f172a' }}>{String(v)}</div>
+              <div style={{ background: '#fff', borderRadius: 10, padding: 14, border: '1px solid #eef2f7' }}>
+                {Object.entries(getUserFields(selected)).map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
+                    <div style={{ width: 160, color: '#374151', fontWeight: 700 }}>{k.charAt(0).toUpperCase() + k.slice(1)}</div>
+                    <div style={{ color: '#0f172a' }}>{String(v)}</div>
                   </div>
                 ))}
 
                 {/* Paid status row */}
-                <div style={{ display:'flex', gap:12, padding:'10px 0' }}>
-                  <div style={{ width:160, color:'#374151', fontWeight:700 }}>Payment</div>
+                <div style={{ display: 'flex', gap: 12, padding: '10px 0' }}>
+                  <div style={{ width: 160, color: '#374151', fontWeight: 700 }}>Payment</div>
                   <div>
-                    <div style={{ fontWeight:800, color: selected.paid ? '#065f46' : '#b91c1c' }}>{selected.paid ? 'Paid' : 'Not paid'}</div>
-                    <div style={{ color:'#64748b', fontSize:13, marginTop:6 }}>
+                    <div style={{ fontWeight: 800, color: selected.paid ? '#065f46' : '#b91c1c' }}>{selected.paid ? 'Paid' : 'Not paid'}</div>
+                    <div style={{ color: '#64748b', fontSize: 13, marginTop: 6 }}>
                       {selected.paid ? 'Registration confirmed as paid.' : 'Registration pending payment.'}
                     </div>
                   </div>
@@ -506,7 +484,7 @@ const downloadPDF = async (row) => {
             </div>
 
             <div className="modal-actions">
-              <div style={{ display:'flex', gap:8 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn ghost-dark" onClick={() => setSelected(null)}>Close</button>
 
                 {/* Download only available when record exists */}
