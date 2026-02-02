@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
   const supabase = createClient(SUPA_URL, SUPA_SERVICE);
   try {
     const { data, error } = await supabase
-      .from('mentorship_applications')
+      .from('mentorship_applications_2026')
       .update({ paid: true })
       .eq('id', id)
       .select()

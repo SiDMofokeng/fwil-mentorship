@@ -27,7 +27,7 @@ export default function AdminPanel() {
     setLoading(true); setMessage('');
     try {
       let qb = supabase
-        .from('mentorship_applications')
+        .from('mentorship_applications_2026')
         .select('*', { count: 'exact' })
         .order('created_at', { ascending: false })
         .range((page - 1) * pageSize, page * pageSize - 1);
@@ -78,7 +78,7 @@ export default function AdminPanel() {
     try {
       // Fetch ALL rows (no range) sorted by surname then name
       const res = await supabase
-        .from('mentorship_applications')
+        .from('mentorship_applications_2026')
         .select('*')
         .order('surname', { ascending: true })
         .order('name', { ascending: true });

@@ -1,182 +1,159 @@
 // FILE: api/payfast-itn.js
-const https = require('https');
-const querystring = require('querystring');
-const crypto = require('crypto');
-const { createClient } = require('@supabase/supabase-js');
-
-// ----- ENV -----
-const SUPA_URL = process.env.SUPA_URL || process.env.REACT_APP_SUPABASE_URL || '';
-const SUPA_SERVICE =
-    process.env.SUPA_SERVICE_ROLE ||
-    process.env.REACT_APP_SUPABASE_SERVICE_ROLE ||
-    '';
-
-const PAYFAST_PASSPHRASE = process.env.PAYFAST_PASSPHRASE || ''; // optional (only if you set one on PayFast)
-const PAYFAST_VALIDATE_HOST = process.env.PAYFAST_VALIDATE_HOST || 'www.payfast.co.za';
-const PAYFAST_VALIDATE_PATH = process.env.PAYFAST_VALIDATE_PATH || '/eng/query/validate';
-
-const EXPECTED_MERCHANT_ID =
-    process.env.REACT_APP_PAYFAST_MERCHANT_ID ||
-    process.env.VITE_PAYFAST_MERCHANT_ID ||
-    process.env.PAYFAST_MERCHANT_ID ||
-    '';
-
-const EXPECTED_AMOUNT = process.env.PAYFAST_EXPECTED_AMOUNT || '350.00'; // optional strict check (string)
+const crypto = require("crypto");
 
 function readRawBody(req) {
     return new Promise((resolve, reject) => {
-        let data = '';
-        req.on('data', chunk => (data += chunk));
-        req.on('end', () => resolve(data));
-        req.on('error', reject);
+        let data = "";
+        req.on("data", (chunk) => (data += chunk));
+        req.on("end", () => resolve(data));
+        req.on("error", reject);
     });
 }
 
-// Build param string exactly like PayFast expects (sorted, exclude signature)
-function buildParamString(pfData) {
-    const keys = Object.keys(pfData)
-        .filter(k => k !== 'signature')
-        .sort();
+function parseUrlEncoded(body) {
+    const params = new URLSearchParams(body);
+    const obj = {};
+    for (const [k, v] of params.entries()) obj[k] = v;
+    return obj;
+}
 
+function buildSignatureString(data, passphrase) {
+    const keys = Object.keys(data).filter((k) => k !== "signature").sort();
     const pairs = [];
     for (const k of keys) {
-        const v = pfData[k];
-        if (v === undefined || v === null) continue;
-        // PayFast expects urlencoded key=value joined by &
-        pairs.push(`${k}=${encodeURIComponent(String(v).trim()).replace(/%20/g, '+')}`);
+        const val = data[k] ?? "";
+        pairs.push(`${k}=${encodeURIComponent(val).replace(/%20/g, "+")}`);
     }
-
-    let paramString = pairs.join('&');
-    if (PAYFAST_PASSPHRASE) {
-        paramString += `&passphrase=${encodeURIComponent(PAYFAST_PASSPHRASE.trim()).replace(/%20/g, '+')}`;
+    let str = pairs.join("&");
+    if (passphrase && passphrase.trim().length > 0) {
+        str += `&passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, "+")}`;
     }
-    return paramString;
+    return str;
 }
 
 function md5(str) {
-    return crypto.createHash('md5').update(str).digest('hex');
+    return crypto.createHash("md5").update(str, "utf8").digest("hex");
 }
 
-function postToPayFastValidate(rawBody) {
-    return new Promise((resolve, reject) => {
-        const options = {
-            hostname: PAYFAST_VALIDATE_HOST,
-            path: PAYFAST_VALIDATE_PATH,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Content-Length': Buffer.byteLength(rawBody),
-            },
-        };
+async function validateWithPayFast(rawBody, sandbox) {
+    const host = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
+    const url = `https://${host}/eng/query/validate`;
 
-        const r = https.request(options, resp => {
-            let out = '';
-            resp.on('data', d => (out += d));
-            resp.on('end', () => resolve({ statusCode: resp.statusCode, body: out }));
-        });
-
-        r.on('error', reject);
-        r.write(rawBody);
-        r.end();
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: rawBody,
     });
+
+    const text = await resp.text();
+    return text.trim() === "VALID";
+}
+
+async function updateSupabase(data) {
+    // ✅ support both env naming styles
+    const supaUrl =
+        process.env.SUPABASE_URL ||
+        process.env.SUPA_URL ||
+        process.env.SUPA_URL?.trim();
+
+    const serviceKey =
+        process.env.SUPABASE_SERVICE_ROLE_KEY ||
+        process.env.SUPA_SERVICE_ROLE ||
+        process.env.SUPA_SERVICE_ROLE?.trim();
+
+    const table =
+        process.env.SUPABASE_MENTORSHIP_TABLE ||
+        process.env.SUPABASE_TABLE ||
+        "mentorship_applications_2026";
+
+    if (!supaUrl || !serviceKey) {
+        throw new Error("Missing SUPABASE_URL/SUPA_URL or SUPABASE_SERVICE_ROLE_KEY/SUPA_SERVICE_ROLE");
+    }
+
+    // ✅ PayFast standard field:
+    // Use m_payment_id first, fallback to custom_str1
+    const mPaymentId = data.m_payment_id || data.custom_str1;
+    if (!mPaymentId) throw new Error("Missing m_payment_id (and custom_str1 fallback)");
+
+    const paymentStatus = String(data.payment_status || "").toUpperCase();
+
+    // Store metadata always
+    const updates = {
+        payment_method: data.payment_method || null,
+        payment_reference: data.pf_payment_id || null,
+        payment_date: new Date().toISOString(),
+        payfast_token: data.token || null,
+        payfast_status: paymentStatus || null,
+    };
+
+    // ✅ Only mark paid true when COMPLETE
+    // Do NOT force paid=false for other statuses (prevents overwriting)
+    if (paymentStatus === "COMPLETE") {
+        updates.paid = true;
+    }
+
+    const url = `${supaUrl}/rest/v1/${encodeURIComponent(table)}?id=eq.${encodeURIComponent(mPaymentId)}`;
+
+    const resp = await fetch(url, {
+        method: "PATCH",
+        headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+            "Content-Type": "application/json",
+            Prefer: "return=representation",
+        },
+        body: JSON.stringify(updates),
+    });
+
+    if (!resp.ok) {
+        const t = await resp.text();
+        throw new Error(`Supabase update failed: ${resp.status} ${t}`);
+    }
+
+    return true;
 }
 
 module.exports = async (req, res) => {
-    // PayFast sends POST (x-www-form-urlencoded)
-    if (req.method !== 'POST') {
-        return res.status(405).send('Method Not Allowed');
+    if (req.method !== "POST") {
+        res.statusCode = 200;
+        res.end("OK");
+        return;
     }
 
     try {
-        const raw = await readRawBody(req);
-        const pfData = querystring.parse(raw);
+        const rawBody = await readRawBody(req);
+        const data = parseUrlEncoded(rawBody);
 
-        // 1) Basic presence checks
-        const paymentStatus = String(pfData.payment_status || '');
-        const mPaymentId = String(pfData.m_payment_id || ''); // your reference if you send it (optional)
-        const customId = String(pfData.custom_str1 || ''); // we use this (Supabase row id)
-        const signature = String(pfData.signature || '');
+        const sandbox = String(process.env.PAYFAST_SANDBOX || "false").toLowerCase() === "true";
+        const passphrase = process.env.PAYFAST_PASSPHRASE || "";
 
-        // 2) Verify signature (local check)
-        const paramString = buildParamString(pfData);
-        const calculatedSig = md5(paramString);
+        // 1) signature check
+        const sigString = buildSignatureString(data, passphrase);
+        const expectedSig = md5(sigString);
+        const gotSig = String(data.signature || "").toLowerCase();
 
-        if (!signature || calculatedSig !== signature) {
-            console.error('PayFast ITN signature mismatch', {
-                calculatedSig,
-                signature,
-                sample: paramString.slice(0, 200),
-            });
-            return res.status(400).send('Invalid signature');
+        if (!gotSig || expectedSig !== gotSig) {
+            res.statusCode = 400;
+            res.end("Invalid signature");
+            return;
         }
 
-        // 3) Optional merchant check (recommended)
-        if (EXPECTED_MERCHANT_ID && String(pfData.merchant_id || '') !== String(EXPECTED_MERCHANT_ID)) {
-            console.error('PayFast ITN merchant mismatch', {
-                expected: EXPECTED_MERCHANT_ID,
-                got: pfData.merchant_id,
-            });
-            return res.status(400).send('Merchant mismatch');
+        // 2) validate with PayFast
+        const isValid = await validateWithPayFast(rawBody, sandbox);
+        if (!isValid) {
+            res.statusCode = 400;
+            res.end("PayFast validation failed");
+            return;
         }
 
-        // 4) Server-side validation with PayFast (critical)
-        const validateResp = await postToPayFastValidate(raw);
-        const validateBody = (validateResp.body || '').trim();
+        // 3) update supabase
+        await updateSupabase(data);
 
-        // PayFast returns "VALID" for good payload
-        if (!/^VALID$/i.test(validateBody)) {
-            console.error('PayFast validate failed', {
-                statusCode: validateResp.statusCode,
-                body: validateBody,
-            });
-            return res.status(400).send('Validation failed');
-        }
-
-        // 5) Only mark paid when COMPLETE
-        if (paymentStatus !== 'COMPLETE') {
-            console.log('PayFast ITN received but not COMPLETE', { paymentStatus, customId, mPaymentId });
-            // Still respond 200 so PayFast stops retrying for non-complete statuses
-            return res.status(200).send('OK');
-        }
-
-        // 6) Optional amount check (you can disable by leaving EXPECTED_AMOUNT empty)
-        if (EXPECTED_AMOUNT) {
-            const amountGross = String(pfData.amount_gross || '');
-            // PayFast sometimes sends "350.00"
-            if (amountGross && amountGross !== EXPECTED_AMOUNT) {
-                console.error('PayFast amount mismatch', { expected: EXPECTED_AMOUNT, got: amountGross });
-                return res.status(400).send('Amount mismatch');
-            }
-        }
-
-        // 7) Update Supabase
-        if (!SUPA_URL || !SUPA_SERVICE) {
-            console.error('Server misconfigured: missing SUPA_URL or SUPA_SERVICE_ROLE');
-            return res.status(500).send('Server misconfigured');
-        }
-        if (!customId) {
-            console.error('Missing custom_str1 (row id) in ITN');
-            return res.status(400).send('Missing reference');
-        }
-
-        const supabase = createClient(SUPA_URL, SUPA_SERVICE);
-
-        const { error } = await supabase
-            .from('mentorship_applications')
-            .update({ paid: true })
-            .eq('id', customId);
-
-        if (error) {
-            console.error('Supabase update failed', error);
-            return res.status(500).send('Database update failed');
-        }
-
-        console.log('PayFast ITN: marked paid', { id: customId });
-
-        // PayFast expects 200 OK
-        return res.status(200).send('OK');
+        res.statusCode = 200;
+        res.end("OK");
     } catch (err) {
-        console.error('PayFast ITN unexpected error', err);
-        return res.status(500).send('Server error');
+        console.error("ITN ERROR:", err);
+        res.statusCode = 500;
+        res.end("Server error");
     }
 };

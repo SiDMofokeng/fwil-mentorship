@@ -28,11 +28,34 @@ const PAYFAST_URL = process.env.REACT_APP_PAYFAST_URL || process.env.VITE_PAYFAS
 const PAYFAST_MERCHANT_ID = process.env.REACT_APP_PAYFAST_MERCHANT_ID || process.env.VITE_PAYFAST_MERCHANT_ID || '';
 const PAYFAST_MERCHANT_KEY = process.env.REACT_APP_PAYFAST_MERCHANT_KEY || process.env.VITE_PAYFAST_MERCHANT_KEY || '';
 
+// put near your PayFast config at the top
+const APP_BASE_URL =
+  process.env.REACT_APP_APP_BASE_URL ||
+  process.env.VITE_APP_BASE_URL ||
+  'https://fwil-mentorship.vercel.app';
+
+const PAYFAST_RETURN_URL =
+  process.env.REACT_APP_PAYFAST_RETURN_URL ||
+  process.env.VITE_PAYFAST_RETURN_URL ||
+  `${APP_BASE_URL}/?pay=success`;
+
+const PAYFAST_CANCEL_URL =
+  process.env.REACT_APP_PAYFAST_CANCEL_URL ||
+  process.env.VITE_PAYFAST_CANCEL_URL ||
+  `${APP_BASE_URL}/?pay=cancel`;
+
+const PAYFAST_AMOUNT =
+  process.env.REACT_APP_PAYFAST_AMOUNT ||
+  process.env.VITE_PAYFAST_AMOUNT ||
+  '350';
+
 export default function MentorshipForm() {
   const [showForm, setShowForm] = useState(false);
   const [showPay, setShowPay] = useState(false);
   const [saving, setSaving] = useState(false);
   const [appRow, setAppRow] = useState(null);
+  const [payAmount, setPayAmount] = useState(String(PAYFAST_AMOUNT || '350'));
+
 
   const [formData, setFormData] = useState({
     status: '', // 'Student' | 'Graduate'
@@ -106,7 +129,7 @@ export default function MentorshipForm() {
       console.log('Attempting insert payload:', payload);
 
       const res = await supabase
-        .from('mentorship_applications')
+        .from('mentorship_applications_2026')
         .insert([payload])
         .select()
         .single();
@@ -138,6 +161,7 @@ export default function MentorshipForm() {
       console.log('Insert succeeded, data:', data);
       setAppRow(data);
       setShowForm(false);
+      setPayAmount(String(PAYFAST_AMOUNT || '350'));
       setShowPay(true);
       setSaving(false);
     } catch (err) {
@@ -295,7 +319,7 @@ export default function MentorshipForm() {
             <div className="modal-head">
               <button className="link-back" onClick={() => { setShowPay(false); setShowForm(true); }}>← Back</button>
               <h3>Confirm & Pay</h3>
-              <span className="pill">R350</span>
+              <span className="pill">R{payAmount || PAYFAST_AMOUNT}</span>
             </div>
 
             <div className="modal-body">
@@ -307,11 +331,38 @@ export default function MentorshipForm() {
                 <div className="row"><span className="label">Location</span><span className="val">{appRow.location}</span></div>
               </div>
 
+              <div style={{ marginTop: 14 }}>
+                <label style={{ display: 'block', fontWeight: 700, marginBottom: 6 }}>
+                  Test amount (ZAR)
+                </label>
+
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: 12,
+                    borderRadius: 10,
+                    border: '1px solid #e2e8f0',
+                    fontSize: 16
+                  }}
+                  placeholder="350"
+                />
+
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
+                  Use a small amount for testing. This will be sent to PayFast.
+                </div>
+              </div>
+
+
               <form id="payfastForm" action={PAYFAST_URL} method="post" className="hidden-form">
                 <input type="hidden" name="merchant_id" value={PAYFAST_MERCHANT_ID} />
                 <input type="hidden" name="merchant_key" value={PAYFAST_MERCHANT_KEY} />
 
-                <input type="hidden" name="amount" value="350.00" />
+                <input type="hidden" name="amount" value={payAmount || PAYFAST_AMOUNT} />
                 <input type="hidden" name="item_name" value="FWIL Mentorship Application" />
 
                 {/* This is the Supabase row id — ITN uses this to mark paid */}
@@ -329,13 +380,19 @@ export default function MentorshipForm() {
                   name="notify_url"
                   value="https://fwil-mentorship.vercel.app/api/payfast-itn"
                 />
+
+                <input type="hidden" name="return_url" value={PAYFAST_RETURN_URL} />
+                <input type="hidden" name="cancel_url" value={PAYFAST_CANCEL_URL} />
+
               </form>
 
             </div>
 
             <div className="modal-actions">
               <button className="btn ghost-dark" onClick={() => { setShowPay(false); setShowForm(true); }}>Cancel</button>
-              <button className="btn primary" onClick={submitPayfast}>Pay R350</button>
+              <button className="btn primary" onClick={submitPayfast}>
+                Pay R{payAmount || PAYFAST_AMOUNT}
+              </button>
             </div>
           </div>
         </div>
