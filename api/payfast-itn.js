@@ -1,159 +1,165 @@
 // FILE: api/payfast-itn.js
+// PayFast ITN handler for Vercel
+// - Signature check
+// - Validate with PayFast
+// - Update Supabase using YOUR REAL columns:
+//   payfast_token (text), payfast_method (text), paid (bool),
+//   payment_reference (text), payment_date (timestamp), notes (text)
+
 const crypto = require("crypto");
 
 function readRawBody(req) {
-    return new Promise((resolve, reject) => {
-        let data = "";
-        req.on("data", (chunk) => (data += chunk));
-        req.on("end", () => resolve(data));
-        req.on("error", reject);
-    });
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk) => (data += chunk));
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
 }
 
 function parseUrlEncoded(body) {
-    const params = new URLSearchParams(body);
-    const obj = {};
-    for (const [k, v] of params.entries()) obj[k] = v;
-    return obj;
+  const params = new URLSearchParams(body);
+  const obj = {};
+  for (const [k, v] of params.entries()) obj[k] = v;
+  return obj;
 }
 
+// PayFast signature string builder (sorted keys, exclude signature, urlencode w/ spaces as +)
 function buildSignatureString(data, passphrase) {
-    const keys = Object.keys(data).filter((k) => k !== "signature").sort();
-    const pairs = [];
-    for (const k of keys) {
-        const val = data[k] ?? "";
-        pairs.push(`${k}=${encodeURIComponent(val).replace(/%20/g, "+")}`);
-    }
-    let str = pairs.join("&");
-    if (passphrase && passphrase.trim().length > 0) {
-        str += `&passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, "+")}`;
-    }
-    return str;
+  const keys = Object.keys(data)
+    .filter((k) => k !== "signature")
+    .sort();
+
+  const pairs = [];
+  for (const k of keys) {
+    const val = data[k] ?? "";
+    pairs.push(`${k}=${encodeURIComponent(val).replace(/%20/g, "+")}`);
+  }
+
+  let str = pairs.join("&");
+  if (passphrase && passphrase.trim().length > 0) {
+    str += `&passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, "+")}`;
+  }
+  return str;
 }
 
 function md5(str) {
-    return crypto.createHash("md5").update(str, "utf8").digest("hex");
+  return crypto.createHash("md5").update(str, "utf8").digest("hex");
 }
 
 async function validateWithPayFast(rawBody, sandbox) {
-    const host = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
-    const url = `https://${host}/eng/query/validate`;
+  const host = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
+  const url = `https://${host}/eng/query/validate`;
 
-    const resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: rawBody,
-    });
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: rawBody,
+  });
 
-    const text = await resp.text();
-    return text.trim() === "VALID";
+  const text = await resp.text();
+  return { ok: text.trim() === "VALID", raw: text };
 }
 
-async function updateSupabase(data) {
-    // ✅ support both env naming styles
-    const supaUrl =
-        process.env.SUPABASE_URL ||
-        process.env.SUPA_URL ||
-        process.env.SUPA_URL?.trim();
+async function updateSupabasePaid(data) {
+  const supaUrl = process.env.SUPA_URL;
+  const serviceKey = process.env.SUPA_SERVICE_ROLE;
+  const table = process.env.SUPABASE_MENTORSHIP_TABLE || "mentorship_applications_2026";
 
-    const serviceKey =
-        process.env.SUPABASE_SERVICE_ROLE_KEY ||
-        process.env.SUPA_SERVICE_ROLE ||
-        process.env.SUPA_SERVICE_ROLE?.trim();
+  if (!supaUrl || !serviceKey) {
+    throw new Error("Missing SUPA_URL or SUPA_SERVICE_ROLE in Vercel env");
+  }
 
-    const table =
-        process.env.SUPABASE_MENTORSHIP_TABLE ||
-        process.env.SUPABASE_TABLE ||
-        "mentorship_applications_2026";
+  // You are sending appRow.id into BOTH of these:
+  // - m_payment_id (now added)
+  // - custom_str1
+  const rowId = data.m_payment_id || data.custom_str1;
+  if (!rowId) throw new Error("Missing row id: expected m_payment_id or custom_str1");
 
-    if (!supaUrl || !serviceKey) {
-        throw new Error("Missing SUPABASE_URL/SUPA_URL or SUPABASE_SERVICE_ROLE_KEY/SUPA_SERVICE_ROLE");
-    }
+  const paymentStatus = String(data.payment_status || "").toUpperCase();
+  const isPaid = paymentStatus === "COMPLETE";
 
-    // ✅ PayFast standard field:
-    // Use m_payment_id first, fallback to custom_str1
-    const mPaymentId = data.m_payment_id || data.custom_str1;
-    if (!mPaymentId) throw new Error("Missing m_payment_id (and custom_str1 fallback)");
+  // Match YOUR REAL columns exactly
+  const updates = {
+    paid: isPaid,
+    payfast_token: data.token || null,
+    payfast_method: data.payment_method || null,
+    payment_reference: data.pf_payment_id || null,
+    payment_date: new Date().toISOString(),
+    notes: `ITN status=${paymentStatus} gross=${data.amount_gross || ""} fee=${data.amount_fee || ""} net=${data.amount_net || ""}`,
+  };
 
-    const paymentStatus = String(data.payment_status || "").toUpperCase();
+  const url = `${supaUrl}/rest/v1/${encodeURIComponent(table)}?id=eq.${encodeURIComponent(rowId)}`;
 
-    // Store metadata always
-    const updates = {
-        payment_method: data.payment_method || null,
-        payment_reference: data.pf_payment_id || null,
-        payment_date: new Date().toISOString(),
-        payfast_token: data.token || null,
-        payfast_status: paymentStatus || null,
-    };
+  const resp = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify(updates),
+  });
 
-    // ✅ Only mark paid true when COMPLETE
-    // Do NOT force paid=false for other statuses (prevents overwriting)
-    if (paymentStatus === "COMPLETE") {
-        updates.paid = true;
-    }
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`Supabase update failed: ${resp.status} ${t}`);
+  }
 
-    const url = `${supaUrl}/rest/v1/${encodeURIComponent(table)}?id=eq.${encodeURIComponent(mPaymentId)}`;
-
-    const resp = await fetch(url, {
-        method: "PATCH",
-        headers: {
-            apikey: serviceKey,
-            Authorization: `Bearer ${serviceKey}`,
-            "Content-Type": "application/json",
-            Prefer: "return=representation",
-        },
-        body: JSON.stringify(updates),
-    });
-
-    if (!resp.ok) {
-        const t = await resp.text();
-        throw new Error(`Supabase update failed: ${resp.status} ${t}`);
-    }
-
-    return true;
+  return true;
 }
 
 module.exports = async (req, res) => {
-    if (req.method !== "POST") {
-        res.statusCode = 200;
-        res.end("OK");
-        return;
+  // PayFast expects 200 OK responses for ITN processing
+  if (req.method !== "POST") {
+    res.statusCode = 200;
+    res.end("OK");
+    return;
+  }
+
+  try {
+    const rawBody = await readRawBody(req);
+    const data = parseUrlEncoded(rawBody);
+
+    const sandbox = (process.env.PAYFAST_SANDBOX || "false").toLowerCase() === "true";
+    const passphrase = process.env.PAYFAST_PASSPHRASE || "";
+
+    // Debug logs (this is what you need right now)
+    console.log("ITN RECEIVED keys:", Object.keys(data));
+    console.log("ITN payment_status:", data.payment_status);
+    console.log("ITN m_payment_id:", data.m_payment_id, "custom_str1:", data.custom_str1);
+
+    // 1) Signature check
+    const sigString = buildSignatureString(data, passphrase);
+    const expectedSig = md5(sigString);
+    const gotSig = (data.signature || "").toLowerCase();
+
+    if (!gotSig || expectedSig !== gotSig) {
+      console.log("ITN SIGNATURE FAIL", { gotSig, expectedSig, passphraseSet: !!passphrase });
+      res.statusCode = 400;
+      res.end("Invalid signature");
+      return;
     }
 
-    try {
-        const rawBody = await readRawBody(req);
-        const data = parseUrlEncoded(rawBody);
+    // 2) Validate with PayFast
+    const validation = await validateWithPayFast(rawBody, sandbox);
+    console.log("ITN VALIDATION:", validation.raw.trim());
 
-        const sandbox = String(process.env.PAYFAST_SANDBOX || "false").toLowerCase() === "true";
-        const passphrase = process.env.PAYFAST_PASSPHRASE || "";
-
-        // 1) signature check
-        const sigString = buildSignatureString(data, passphrase);
-        const expectedSig = md5(sigString);
-        const gotSig = String(data.signature || "").toLowerCase();
-
-        if (!gotSig || expectedSig !== gotSig) {
-            res.statusCode = 400;
-            res.end("Invalid signature");
-            return;
-        }
-
-        // 2) validate with PayFast
-        const isValid = await validateWithPayFast(rawBody, sandbox);
-        if (!isValid) {
-            res.statusCode = 400;
-            res.end("PayFast validation failed");
-            return;
-        }
-
-        // 3) update supabase
-        await updateSupabase(data);
-
-        res.statusCode = 200;
-        res.end("OK");
-    } catch (err) {
-        console.error("ITN ERROR:", err);
-        res.statusCode = 500;
-        res.end("Server error");
+    if (!validation.ok) {
+      res.statusCode = 400;
+      res.end("PayFast validation failed");
+      return;
     }
+
+    // 3) Update Supabase
+    await updateSupabasePaid(data);
+
+    res.statusCode = 200;
+    res.end("OK");
+  } catch (err) {
+    console.error("ITN ERROR:", err);
+    res.statusCode = 500;
+    res.end("Server error");
+  }
 };

@@ -69,10 +69,64 @@ export default function MentorshipForm() {
 
   // lock body scroll when modals are open
   useEffect(() => {
-    console.log("🔥 FWIL APP RENDERED");
-    document.body.style.overflow = (showForm || showPay) ? 'hidden' : 'auto';
-    return () => { document.body.style.overflow = 'auto'; };
-  }, [showForm, showPay]);
+    const params = new URLSearchParams(window.location.search);
+    const pay = params.get('pay'); // success | cancel
+    const pid = params.get('pid');
+
+    if (!pid) return;
+    if (pay !== 'success' && pay !== 'cancel') return;
+
+    (async () => {
+      try {
+        if (!supabase || !supabase.from) return;
+
+        const nowIso = new Date().toISOString();
+
+        const updates =
+          pay === 'success'
+            ? {
+              paid: true,
+              payment_date: nowIso,
+              notes: `Marked PAID via return_url (no ITN) @ ${nowIso}`,
+              payfast_token: null,
+              payfast_method: null,
+              payfast_reference: null,
+            }
+            : {
+              paid: false,
+              payment_date: nowIso,
+              notes: `Payment CANCELLED via cancel_url @ ${nowIso}`,
+              payfast_token: null,
+              payfast_method: null,
+              payfast_reference: null,
+            };
+
+        const { error } = await supabase
+          .from('mentorship_applications_2026')
+          .update(updates)
+          .eq('id', pid);
+
+        if (error) {
+          console.error('Return/Cancel URL update failed:', error);
+          alert(`Payment ${pay} detected, but failed to update database. Check console.`);
+          return;
+        }
+
+        // Clean URL so refresh doesn't re-run the update
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+
+        alert(
+          pay === 'success'
+            ? 'Payment success detected ✅ Database updated.'
+            : 'Payment cancelled ❌ Database updated.'
+        );
+      } catch (e) {
+        console.error('Return/Cancel URL update exception:', e);
+        alert(`Payment ${pay} detected, but update crashed. Check console.`);
+      }
+    })();
+  }, []);
 
   const openFormFor = (status) => {
     setFormData(f => ({ ...f, status })); // preselect but allow change inside form
@@ -116,7 +170,7 @@ export default function MentorshipForm() {
         email: formData.email,
         contact: formData.contact,
         location: formData.location,
-        paid: false,
+        paid: true,
       };
 
       if (!supabase || !supabase.from) {
@@ -365,6 +419,8 @@ export default function MentorshipForm() {
                 <input type="hidden" name="amount" value={payAmount || PAYFAST_AMOUNT} />
                 <input type="hidden" name="item_name" value="FWIL Mentorship Application" />
 
+                <input type="hidden" name="m_payment_id" value={String(appRow.id)} />
+
                 {/* This is the Supabase row id — ITN uses this to mark paid */}
                 <input type="hidden" name="custom_str1" value={String(appRow.id)} />
 
@@ -381,8 +437,17 @@ export default function MentorshipForm() {
                   value="https://fwil-mentorship.vercel.app/api/payfast-itn"
                 />
 
-                <input type="hidden" name="return_url" value={PAYFAST_RETURN_URL} />
-                <input type="hidden" name="cancel_url" value={PAYFAST_CANCEL_URL} />
+                <input
+                  type="hidden"
+                  name="return_url"
+                  value={`${APP_BASE_URL}/api/payment-return?pay=success&pid=${encodeURIComponent(String(appRow.id))}`}
+                />
+
+                <input
+                  type="hidden"
+                  name="cancel_url"
+                  value={`${APP_BASE_URL}/api/payment-return?pay=cancel&pid=${encodeURIComponent(String(appRow.id))}`}
+                />
 
               </form>
 
