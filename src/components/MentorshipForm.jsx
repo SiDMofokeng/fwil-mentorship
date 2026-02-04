@@ -53,13 +53,37 @@ const PAYFAST_AMOUNT =
 void PAYFAST_RETURN_URL;
 void PAYFAST_CANCEL_URL;
 
+function humanSupabaseError(err) {
+  if (!err) return 'Something went wrong. Please try again.';
+
+  const code = String(err.code || '');
+  const msg = String(err.message || '');
+
+  // Postgres unique violation
+  if (code === '23505' || /duplicate key/i.test(msg)) {
+    // If your unique constraint name includes email_unique
+    if (/email/i.test(msg) || /email_unique/i.test(msg)) {
+      return 'This email address has already been used to apply for Mentorship 2026. Please use a different email, or contact FWIL if you need help.';
+    }
+    return 'A duplicate record was detected. Please check your details and try again.';
+  }
+
+  // Common Supabase auth/RLS style responses
+  if (/row level security/i.test(msg) || /permission/i.test(msg)) {
+    return 'Your request was blocked by database security rules. Please contact the administrator.';
+  }
+
+  // Fallback
+  return msg || 'Something went wrong. Please try again.';
+}
+
 export default function MentorshipForm() {
   const [showForm, setShowForm] = useState(false);
   const [showPay, setShowPay] = useState(false);
   const [saving, setSaving] = useState(false);
   const [appRow, setAppRow] = useState(null);
   const [payAmount, setPayAmount] = useState(String(PAYFAST_AMOUNT || '350'));
-
+  const [bannerError, setBannerError] = useState(''); // NEW: nicer error display
 
   const [formData, setFormData] = useState({
     status: '', // 'Student' | 'Graduate'
@@ -86,6 +110,7 @@ export default function MentorshipForm() {
 
         const nowIso = new Date().toISOString();
 
+        // IMPORTANT: your real column is payment_reference (not payfast_reference)
         const updates =
           pay === 'success'
             ? {
@@ -94,7 +119,7 @@ export default function MentorshipForm() {
               notes: `Marked PAID via return_url (no ITN) @ ${nowIso}`,
               payfast_token: null,
               payfast_method: null,
-              payfast_reference: null,
+              payment_reference: null,
             }
             : {
               paid: false,
@@ -102,7 +127,7 @@ export default function MentorshipForm() {
               notes: `Payment CANCELLED via cancel_url @ ${nowIso}`,
               payfast_token: null,
               payfast_method: null,
-              payfast_reference: null,
+              payment_reference: null,
             };
 
         const { error } = await supabase
@@ -112,7 +137,7 @@ export default function MentorshipForm() {
 
         if (error) {
           console.error('Return/Cancel URL update failed:', error);
-          alert(`Payment ${pay} detected, but failed to update database. Check console.`);
+          alert(`Payment ${pay} detected, but failed to update database: ${humanSupabaseError(error)}`);
           return;
         }
 
@@ -127,7 +152,7 @@ export default function MentorshipForm() {
         );
       } catch (e) {
         console.error('Return/Cancel URL update exception:', e);
-        alert(`Payment ${pay} detected, but update crashed. Check console.`);
+        alert(`Payment ${pay} detected, but update crashed. Please contact support.`);
       }
     })();
   }, []);
@@ -135,17 +160,26 @@ export default function MentorshipForm() {
   const openFormFor = (status) => {
     setFormData(f => ({ ...f, status })); // preselect but allow change inside form
     setErrors({});
+    setBannerError('');
     setShowForm(true);
   };
 
   const update = (e) => {
     const { name, value, type } = e.target;
-    // radio buttons: we use name "status" or "location" depending on markup
     if (type === 'radio') {
       setFormData(f => ({ ...f, [name]: value }));
     } else {
       setFormData(f => ({ ...f, [name]: value }));
     }
+
+    // clear field-level error as user types
+    setErrors(prev => {
+      if (!prev[name]) return prev;
+      const copy = { ...prev };
+      delete copy[name];
+      return copy;
+    });
+    setBannerError('');
   };
 
   const validateDetails = () => {
@@ -158,31 +192,78 @@ export default function MentorshipForm() {
     if (!formData.contact.trim()) e.contact = 'Required';
     if (formData.contact && !/^[0-9+\s()-]{7,}$/.test(formData.contact)) e.contact = 'Invalid number';
     if (!formData.location) e.location = 'Choose a location';
+
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
+  // NEW: Pre-check duplicate email for nicer UX
+  const emailAlreadyApplied = async (email) => {
+    try {
+      const clean = String(email || '').trim().toLowerCase();
+      if (!clean) return { exists: false };
+
+      const res = await supabase
+        .from('mentorship_applications_2026')
+        .select('id, paid, created_at')
+        .eq('email', clean)
+        .limit(1);
+
+      if (res.error) {
+        // If RLS prevents selects, we just can't pre-check. Insert will still catch 23505.
+        console.warn('Email pre-check blocked or failed:', res.error);
+        return { exists: false, unknown: true };
+      }
+
+      const row = (res.data || [])[0] || null;
+      if (!row) return { exists: false };
+
+      return { exists: true, row };
+    } catch (err) {
+      console.warn('Email pre-check exception:', err);
+      return { exists: false, unknown: true };
+    }
+  };
+
   const saveAndOpenPay = async () => {
+    setBannerError('');
     if (!validateDetails()) return;
+
     setSaving(true);
 
     try {
+      if (!supabase || !supabase.from) {
+        console.error('Supabase client not initialized. SUPA_URL or SUPA_KEY may be missing.');
+        setBannerError('System error: database connection is not configured. Please contact the administrator.');
+        setSaving(false);
+        return;
+      }
+
+      // Normalize email to avoid duplicates by casing/spaces
+      const normalizedEmail = String(formData.email || '').trim().toLowerCase();
+
+      // 1) Pre-check duplicates for friendly message
+      const dup = await emailAlreadyApplied(normalizedEmail);
+      if (dup.exists) {
+        setErrors(prev => ({ ...prev, email: 'This email has already applied.' }));
+        setBannerError(
+          `This email address has already been used to apply for Mentorship 2026. ` +
+          `If this is you, please contact FWIL for assistance.`
+        );
+        setSaving(false);
+        return;
+      }
+
       const payload = {
         status: formData.status,
         name: formData.name,
         surname: formData.surname,
-        email: formData.email,
+        email: normalizedEmail,
         contact: formData.contact,
         location: formData.location,
-        paid: true,
+        // IMPORTANT: should be false until payment is confirmed
+        paid: false,
       };
-
-      if (!supabase || !supabase.from) {
-        console.error('Supabase client not initialized. SUPA_URL or SUPA_KEY may be missing.');
-        alert('Supabase client not initialized. Check env variables and restart dev server.');
-        setSaving(false);
-        return;
-      }
 
       console.log('Attempting insert payload:', payload);
 
@@ -202,15 +283,15 @@ export default function MentorshipForm() {
         try {
           console.error('Raw error full object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
         } catch (jsonErr) { }
-        alert('Failed to save application on server. See console for details.');
 
-        // fallback local save
-        const fallbackId = 'local-' + Date.now();
-        const fallbackRow = { id: fallbackId, ...payload, created_at: new Date().toISOString() };
-        localStorage.setItem('fwil_fallback_application', JSON.stringify(fallbackRow));
-        setAppRow(fallbackRow);
-        setShowForm(false);
-        setShowPay(true);
+        const friendly = humanSupabaseError(error);
+
+        // If it's the email unique error, attach it to the email field too
+        if (String(error.code) === '23505' || /email_unique/i.test(String(error.message || ''))) {
+          setErrors(prev => ({ ...prev, email: 'This email has already applied.' }));
+        }
+
+        setBannerError(friendly);
         setSaving(false);
         return;
       }
@@ -224,15 +305,7 @@ export default function MentorshipForm() {
       setSaving(false);
     } catch (err) {
       console.error('Unexpected exception during insert:', err);
-      alert('Unexpected error saving application. See console for details.');
-
-      // fallback local save so flow continues
-      const fallbackId = 'local-' + Date.now();
-      const fallbackRow = { id: fallbackId, status: formData.status, name: formData.name, surname: formData.surname, email: formData.email, contact: formData.contact, location: formData.location, created_at: new Date().toISOString(), paid: false };
-      localStorage.setItem('fwil_fallback_application', JSON.stringify(fallbackRow));
-      setAppRow(fallbackRow);
-      setShowForm(false);
-      setShowPay(true);
+      setBannerError('Unexpected error saving your application. Please try again, or contact FWIL if the issue persists.');
       setSaving(false);
     }
   };
@@ -261,11 +334,9 @@ export default function MentorshipForm() {
               Exclusive to law students that are enrolled in a tertiary institution and graduates entering the profession within South Africa. The 8 week programme includes sessions during which the mentees are exposed to traditional and non-traditional career opportunities available within legal profession, and receive training in the following areas: CV/Cover Letter Drafting | Personal Branding | Mental health education | Professional Conduct | Articles, Pupillage & Alternatives | Interview prep: What recruiters want.
             </p>
 
-            {/**/}
             <div className="cta-row">
               <button className="btn primary" onClick={() => openFormFor('Student')}>Apply Here</button>
             </div>
-
           </div>
 
           <div className="hero-right">
@@ -288,7 +359,25 @@ export default function MentorshipForm() {
               <h3>Tell us about you</h3>
               <span className="chip">{formData.status || 'Applicant'}</span>
             </div>
+
             <div className="modal-body">
+              {/* NEW: friendly banner error */}
+              {bannerError && (
+                <div
+                  style={{
+                    background: '#fff1f2',
+                    border: '1px solid #fecdd3',
+                    color: '#9f1239',
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    marginBottom: 12,
+                    fontWeight: 700
+                  }}
+                >
+                  {bannerError}
+                </div>
+              )}
+
               <div className="form-grid">
                 {/* Status (Student / Graduate) */}
                 <div className="form-field full">
@@ -331,7 +420,14 @@ export default function MentorshipForm() {
 
                 <div className="form-field">
                   <label>Email address</label>
-                  <input name="email" type="email" value={formData.email} onChange={update} placeholder="you@example.com" />
+                  <input
+                    name="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={update}
+                    placeholder="you@example.com"
+                    style={errors.email ? { borderColor: '#e11d48' } : undefined}
+                  />
                   {errors.email && <span className="err">{errors.email}</span>}
                 </div>
 
@@ -414,7 +510,6 @@ export default function MentorshipForm() {
                 </div>
               </div>
 
-
               <form id="payfastForm" action={PAYFAST_URL} method="post" className="hidden-form">
                 <input type="hidden" name="merchant_id" value={PAYFAST_MERCHANT_ID} />
                 <input type="hidden" name="merchant_key" value={PAYFAST_MERCHANT_KEY} />
@@ -423,17 +518,14 @@ export default function MentorshipForm() {
                 <input type="hidden" name="item_name" value="FWIL Mentorship Application" />
 
                 <input type="hidden" name="m_payment_id" value={String(appRow.id)} />
-
-                {/* This is the Supabase row id — ITN uses this to mark paid */}
                 <input type="hidden" name="custom_str1" value={String(appRow.id)} />
 
-                {/* Applicant info (optional but fine) */}
                 <input type="hidden" name="name_first" value={appRow.name} />
                 <input type="hidden" name="name_last" value={appRow.surname} />
                 <input type="hidden" name="email_address" value={appRow.email} />
                 <input type="hidden" name="cell_number" value={appRow.contact} />
 
-                {/* PAYFAST ITN (THIS IS THE IMPORTANT NEW LINE) */}
+                {/* IMPORTANT: update this later to your new domain once everything is confirmed */}
                 <input
                   type="hidden"
                   name="notify_url"
@@ -451,9 +543,7 @@ export default function MentorshipForm() {
                   name="cancel_url"
                   value={`${APP_BASE_URL}/api/payment-return?pay=cancel&pid=${encodeURIComponent(String(appRow.id))}`}
                 />
-
               </form>
-
             </div>
 
             <div className="modal-actions">
